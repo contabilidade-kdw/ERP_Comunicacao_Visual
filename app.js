@@ -7,12 +7,12 @@ if(window.pdfjsLib){
   pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
 
-let S;
-try{S=JSON.parse(localStorage.getItem(K))||JSON.parse(localStorage.getItem('erp_cv_v2'))||JSON.parse(localStorage.getItem('erp_cv_v1'))}catch(e){}
-if(!S)S={
+// ⚠️ COLE AQUI O UUID DA SUA EMPRESA (da tabela 'organizations')
+const ORG_ID = '3c08f841-984c-4041-a3ff-52b326b27f5c';
+
+let S = {
   cfg:{trib:8,com:5,taxa:2,mMin:15,mMed:25,mMax:35,ind:10,hora:35,pin:'1234'},
-  dre:null,
-  seq:1,qseq:1,sales:[],quotes:[],auth:[],
+  dre:null, seq:1, qseq:1, sales:[], quotes:[], auth:[],
   mats:[
     {id:1,nome:'ACM',un:'m²',custo:180},
     {id:2,nome:'Estrutura metálica',un:'m',custo:22},
@@ -26,13 +26,31 @@ if(!S)S={
     {id:2,nome:'Adesivo impresso m²',cat:'Adesivos',horas:.5,comp:[{m:6,q:1,perda:8}]}
   ]
 };
-S.quotes=S.quotes||[];S.qseq=S.qseq||1;S.dre=S.dre||null;
 
-const save=()=>{try{localStorage.setItem(K,JSON.stringify(S))}catch(e){console.warn('Limite de armazenamento atingido',e)}};
-let role='admin',page='dash',dr=null,cart=[],pos={pid:'',q:1,mode:'med',custom:'',pin:'',just:'',cliente:''},err='';
+// Salva localmente (cache rápido) e sincroniza com o Supabase
+const save = async () => {
+  try { localStorage.setItem(K, JSON.stringify(S)); } catch(e) {}
+  if (typeof sb === 'undefined' || !me) return;
+
+  const { data, error } = await sb.from('dashboard_data').upsert({
+    organization_id: ORG_ID,
+    payload: S,
+    source_name: 'ERP_Comunicacao_Visual',
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'organization_id' }).select();
+
+  if (error) {
+    console.error('Erro ao salvar no Supabase:', error.message);
+    alert('Erro ao salvar na nuvem: ' + error.message);
+  } else if (!data || data.length === 0) {
+    alert('Bloqueio de segurança (RLS): O banco recusou a gravação dos dados.');
+  }
+};
+
+let role='seller',page='dash',dr=null,cart=[],pos={pid:'',q:1,mode:'med',custom:'',pin:'',just:'',cliente:''},err='';
 let prodFilter='',prodPage=1,impPreview=null,drePreview=null;
 
-const adm=()=>role!='seller',isA=()=>role=='admin';
+const adm=()=>role!='seller',isA=()=>role=='admin'||role=='staff';
 const vp=()=>S.cfg.trib+S.cfg.com+S.cfg.taxa;
 function cost(p){
   let mat=0;
@@ -50,51 +68,130 @@ function met(pr,c){const v=pr*vp()/100,lucro=pr-v-c.tot;return{lucro,margem:pr?l
 
 const NAV=[['dash','Dashboard'],['ins','Insumos'],['prod','Produtos & Estoque'],['sim','Simulador'],['pdv','Orçamentos'],['ven','Vendas'],['cfg','DRE & Configurações']];
 let V_USR;NAV.push(['usr','Usuários & Acessos']);
-const DEF_SCR={admin:NAV.map(n=>n[0]),manager:['dash','ins','prod','sim','pdv','ven'],seller:['prod','pdv','ven']};
-const RL={admin:'Administrador',manager:'Gerente',seller:'Vendedor'};
-const UK='erp_cv_users';let U=[];try{U=JSON.parse(localStorage.getItem(UK))||[]}catch(e){U=[]}
-const saveU=()=>localStorage.setItem(UK,JSON.stringify(U));
-let me=null;try{const sid=sessionStorage.getItem('erp_cv_sess');me=U.find(u=>u.id==sid&&!u.bloq)||null}catch(e){}
-if(me)role=me.role;
-async function hsh(s){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('erpcv:'+s));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
-const allowed=()=>{if(!me)return[];if(me.role=='admin')return NAV.map(n=>n[0]);return NAV.map(n=>n[0]).filter(k=>k!='usr'&&(me.telas||DEF_SCR[me.role]).includes(k))};
+const DEF_SCR={admin:NAV.map(n=>n[0]),staff:NAV.map(n=>n[0]),manager:['dash','ins','prod','sim','pdv','ven'],seller:['prod','pdv','ven']};
+const RL={admin:'Administrador',staff:'Administrador',manager:'Gerente',seller:'Vendedor'};
+
+let U = []; // Lista de perfis carregados do Supabase
+let me = null; // Perfil do usuário logado
+
+const allowed=()=>{
+  if(!me)return[];
+  if(isA())return NAV.map(n=>n[0]);
+  return NAV.map(n=>n[0]).filter(k=>k!='usr'&&(me.telas||DEF_SCR[me.role]||[]).includes(k));
+};
+
+// Tela de Login conectada ao Supabase Auth
 function authScreen(){
-  const first=!U.length;
-  document.body.innerHTML=`<div style="min-height:100vh;display:grid;place-items:center;background:var(--nav);padding:20px"><form id="af" style="background:var(--sf);padding:28px;border-radius:14px;width:100%;max-width:380px;display:grid;gap:12px">
-  <h2 style="margin:0">ERP Comunicação Visual</h2><p class="mu" style="margin:0">${first?'Primeiro acesso: crie o usuário Administrador.':'Entre com seu usuário e senha.'}</p>
-  ${first?'<label>Nome<input id="a_n" required></label>':''}
-  <label>Usuário<input id="a_u" required autocomplete="username"></label>
-  <label>Senha<input id="a_p" type="password" required autocomplete="${first?'new-password':'current-password'}" ${first?'minlength="4"':''}></label>
-  <div id="a_e" style="color:var(--er)"></div><button class="b" type="submit">${first?'Criar administrador':'Entrar'}</button></form></div>`;
-  document.getElementById('af').onsubmit=async ev=>{ev.preventDefault();const u=$('#a_u').value.trim().toLowerCase(),pw=$('#a_p').value,hp=await hsh(pw);
-    if(first){U.push({id:Date.now()+'',nome:$('#a_n').value.trim(),login:u,senha:hp,role:'admin',bloq:false,telas:DEF_SCR.admin});saveU();sessionStorage.setItem('erp_cv_sess',U[0].id);location.reload();return}
-    const x=U.find(z=>z.login==u&&z.senha==hp);
-    if(!x){$('#a_e').textContent='Usuário ou senha inválidos.';return}
-    if(x.bloq){$('#a_e').textContent='Usuário bloqueado. Fale com o administrador.';return}
-    sessionStorage.setItem('erp_cv_sess',x.id);location.reload()};
+  document.body.innerHTML=`<div style="min-height:100vh;display:grid;place-items:center;background:var(--nav);padding:20px">
+    <form id="af" style="background:var(--sf);padding:28px;border-radius:14px;width:100%;max-width:380px;display:grid;gap:12px">
+      <h2 style="margin:0">ERP Comunicação Visual</h2>
+      <p class="mu" style="margin:0">Entre com seu e-mail e senha cadastrados.</p>
+      <label>E-mail<input id="a_u" type="email" required autocomplete="email"></label>
+      <label>Senha<input id="a_p" type="password" required autocomplete="current-password"></label>
+      <div id="a_e" style="color:var(--er);font-size:13px"></div>
+      <button id="a_btn" class="b" type="submit">Entrar</button>
+    </form>
+  </div>`;
+
+  document.getElementById('af').onsubmit = async ev => {
+    ev.preventDefault();
+    const btn = $('#a_btn');
+    const errDiv = $('#a_e');
+    btn.disabled = true;
+    btn.textContent = 'Autenticando...';
+    errDiv.textContent = '';
+
+    const email = $('#a_u').value.trim();
+    const password = $('#a_p').value;
+
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      errDiv.textContent = 'E-mail ou senha inválidos.';
+      btn.disabled = false;
+      btn.textContent = 'Entrar';
+      return;
+    }
+
+    // Recarrega para inicializar a sessão e baixar os dados da nuvem
+    location.reload();
+  };
 }
-function logout(){sessionStorage.removeItem('erp_cv_sess');location.reload()}
+
+async function logout(){
+  await sb.auth.signOut();
+  location.reload();
+}
+
+// Gestão de Usuários e Permissões (via tabela profiles)
 let ue=null;
 V_USR=()=>{const scr=NAV.filter(n=>n[0]!='usr');
-  return `<div class="card" style="padding:16px;margin-bottom:16px"><h3 style="margin-top:0">${ue?'Editar usuário':'Novo usuário'}</h3><div class="row" style="flex-wrap:wrap;gap:10px">
-  <label>Nome<input id="u_n" value="${esc(ue?.nome||'')}"></label><label>Usuário<input id="u_l" value="${esc(ue?.login||'')}"></label>
-  <label>Senha${ue?' (vazio = manter)':''}<input id="u_p" type="password"></label>
-  <label>Perfil<select id="u_r" onchange="document.querySelectorAll('.u_t').forEach(c=>c.checked=DEF_SCR[this.value].includes(c.value))">${Object.keys(RL).map(r=>`<option value="${r}" ${(ue?.role||'seller')==r?'selected':''}>${RL[r]}</option>`).join('')}</select></label></div>
-  <p class="mu" style="margin:12px 0 6px">Telas liberadas (administrador sempre vê todas):</p><div class="row" style="flex-wrap:wrap;gap:14px">
-  ${scr.map(n=>`<label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" class="u_t" value="${n[0]}" ${(ue?.telas||DEF_SCR[ue?.role||'seller']).includes(n[0])?'checked':''}> ${n[1]}</label>`).join('')}</div>
-  <div id="u_e" style="color:var(--er);margin-top:8px"></div><div class="row" style="margin-top:10px;gap:8px"><button class="b" onclick="saveUsr()">Salvar</button>${ue?'<button class="b g" onclick="ue=null;R()">Cancelar</button>':''}</div></div>
-  <div class="card" style="padding:16px"><table style="width:100%"><thead><tr><th align="left">Nome</th><th align="left">Usuário</th><th align="left">Perfil</th><th align="left">Telas</th><th align="left">Situação</th><th></th></tr></thead><tbody>
-  ${U.map(u=>`<tr><td>${esc(u.nome)}</td><td>${esc(u.login)}</td><td>${RL[u.role]}</td><td class="mu">${u.role=='admin'?'Todas':(u.telas||[]).map(k=>NAV.find(n=>n[0]==k)?.[1]).filter(Boolean).join(', ')||'Nenhuma'}</td><td>${u.bloq?'<b style="color:var(--er)">Bloqueado</b>':'<span style="color:var(--ok)">Ativo</span>'}</td>
-  <td style="white-space:nowrap"><button class="b g" onclick="ue=U.find(z=>z.id=='${u.id}');R()">Editar</button> ${u.id!=me.id?`<button class="b g" onclick="togB('${u.id}')">${u.bloq?'Desbloquear':'Bloquear'}</button> <button class="b d" onclick="delU('${u.id}')">Excluir</button>`:''}</td></tr>`).join('')}</tbody></table></div>`};
-async function saveUsr(){const n=$('#u_n').value.trim(),l=$('#u_l').value.trim().toLowerCase(),pw=$('#u_p').value,r=$('#u_r').value,t=[...document.querySelectorAll('.u_t:checked')].map(c=>c.value);
-  const e=m=>{$('#u_e').textContent=m};if(!n||!l)return e('Informe nome e usuário.');
-  if(U.some(z=>z.login==l&&z.id!=ue?.id))return e('Esse usuário já existe.');
-  if(!ue&&pw.length<4)return e('Senha com pelo menos 4 caracteres.');if(ue&&pw&&pw.length<4)return e('Senha com pelo menos 4 caracteres.');
-  if(ue&&ue.id==me.id&&r!='admin')return e('Você não pode tirar seu próprio acesso de administrador.');
-  const o=ue||{id:Date.now()+'',bloq:false};o.nome=n;o.login=l;o.role=r;o.telas=r=='admin'?DEF_SCR.admin:t;if(pw)o.senha=await hsh(pw);
-  if(!ue)U.push(o);saveU();ue=null;R()}
-function togB(id){const u=U.find(z=>z.id==id);u.bloq=!u.bloq;saveU();R()}
-function delU(id){if(confirm('Excluir este usuário?')){U=U.filter(z=>z.id!=id);saveU();R()}}
+  return `<div class="card" style="padding:16px;margin-bottom:16px">
+    <h3 style="margin-top:0">${ue?'Editar permissões de: '+esc(ue.nome||ue.email):'Gestão de Acessos (Supabase)'}</h3>
+    <p class="mu" style="margin-top:0">Para adicionar um novo usuário, cadastre o e-mail e senha dele no painel <b>Authentication > Users</b> do Supabase. Ele aparecerá automaticamente na lista abaixo após o primeiro acesso (ou insira o UUID dele na tabela profiles).</p>
+    ${ue?`
+      <div class="row" style="flex-wrap:wrap;gap:10px">
+        <label>Nome de Exibição<input id="u_n" value="${esc(ue?.nome||'')}"></label>
+        <label>Perfil<select id="u_r" onchange="document.querySelectorAll('.u_t').forEach(c=>c.checked=DEF_SCR[this.value].includes(c.value))">
+          <option value="admin" ${ue?.role=='admin'||ue?.role=='staff'?'selected':''}>Administrador</option>
+          <option value="manager" ${ue?.role=='manager'?'selected':''}>Gerente</option>
+          <option value="seller" ${ue?.role=='seller'?'selected':''}>Vendedor</option>
+        </select></label>
+      </div>
+      <p class="mu" style="margin:12px 0 6px">Telas liberadas (administrador sempre vê todas):</p>
+      <div class="row" style="flex-wrap:wrap;gap:14px">
+        ${scr.map(n=>`<label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" class="u_t" value="${n[0]}" ${(ue?.telas||DEF_SCR[ue?.role||'seller']).includes(n[0])?'checked':''}> ${n[1]}</label>`).join('')}
+      </div>
+      <div id="u_e" style="color:var(--er);margin-top:8px"></div>
+      <div class="row" style="margin-top:10px;gap:8px">
+        <button class="b" onclick="saveUsr()">Salvar Permissões</button>
+        <button class="b g" onclick="ue=null;R()">Cancelar</button>
+      </div>
+    `:''}
+  </div>
+  <div class="card" style="padding:16px">
+    <table style="width:100%">
+      <thead><tr><th align="left">Nome</th><th align="left">E-mail / ID</th><th align="left">Perfil</th><th align="left">Telas</th><th align="left">Situação</th><th></th></tr></thead>
+      <tbody>
+        ${U.map(u=>`<tr>
+          <td>${esc(u.nome||'Sem nome')}</td>
+          <td><small class="mu">${esc(u.email||u.id)}</small></td>
+          <td>${RL[u.role]||u.role}</td>
+          <td class="mu">${u.role=='admin'||u.role=='staff'?'Todas':(u.telas||[]).map(k=>NAV.find(n=>n[0]==k)?.[1]).filter(Boolean).join(', ')||'Nenhuma'}</td>
+          <td>${u.bloq?'<b style="color:var(--er)">Bloqueado</b>':'<span style="color:var(--ok)">Ativo</span>'}</td>
+          <td style="white-space:nowrap">
+            <button class="b g" onclick="ue=U.find(z=>z.id=='${u.id}');R()">Permissões</button> 
+            ${u.id!=me.id?`<button class="b g" onclick="togB('${u.id}')">${u.bloq?'Desbloquear':'Bloquear'}</button>`:''}
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`};
+
+async function saveUsr(){
+  if(!ue)return;
+  const n=$('#u_n').value.trim(), r=$('#u_r').value, t=[...document.querySelectorAll('.u_t:checked')].map(c=>c.value);
+  if(ue.id==me.id && r!='admin' && r!='staff')return alert('Você não pode tirar seu próprio acesso de administrador.');
+  
+  const telas = (r=='admin'||r=='staff') ? DEF_SCR.admin : t;
+  const { error } = await sb.from('profiles').update({ nome: n, role: r, telas }).eq('id', ue.id);
+  
+  if(error) return alert('Erro ao atualizar perfil: ' + error.message);
+  
+  ue.nome = n; ue.role = r; ue.telas = telas;
+  ue = null;
+  R();
+}
+
+async function togB(id){
+  const u=U.find(z=>z.id==id);
+  const novoStatus = !u.bloq;
+  const { error } = await sb.from('profiles').update({ bloq: novoStatus }).eq('id', id);
+  if(error) return alert('Erro ao alterar status: ' + error.message);
+  u.bloq = novoStatus;
+  R();
+}
+
 function go(p){page=p;dr=null;err='';R()}
 function R(){
   if(!me)return authScreen();
@@ -393,7 +490,7 @@ function confirmImportSheet(){
 
   impPreview=null;
   save();
-  alert('Importação concluída!\n• Itens processados: '+list.length+'\n• Novos produtos no catálogo: '+addedP+'\n• Novos insumos: '+addedM);
+  alert('Importação concluída!\nItens processados: '+list.length+'\nNovos produtos no catálogo: '+addedP+'\nNovos insumos: '+addedM);
   R();
 }
 
@@ -697,7 +794,7 @@ function applyDreToPricing(){
   if(drePreview.despesasFin>0)S.cfg.taxa=Math.max(0,Math.min(30,drePreview.pctTaxaFin));
   drePreview=null;
   save();
-  alert('DRE aplicada à formação de preço!\n• Rateio de Custos Indiretos: '+P(S.cfg.ind)+'\n• Tributos sobre Venda: '+P(S.cfg.trib)+'\n• Taxa Financeira: '+P(S.cfg.taxa)+'\n\nTodos os produtos do catálogo já refletem essa estrutura de custos.');
+  alert('DRE aplicada à formação de preço!\nRateio de Custos Indiretos: '+P(S.cfg.ind)+'\nTributos sobre Venda: '+P(S.cfg.trib)+'\nTaxa Financeira: '+P(S.cfg.taxa)+'\n\nTodos os produtos do catálogo já refletem essa estrutura de custos.');
   R();
 }
 
@@ -785,4 +882,61 @@ function saveC(){
   S.cfg=n;err='';save();R();
 }
 
-R();
+async function bootstrap() {
+  if (typeof sb === 'undefined') {
+    document.body.innerHTML = '<p style="padding:20px;color:red">Erro: SDK do Supabase não encontrado no index.html.</p>';
+    return;
+  }
+
+  // 1. Verifica se há usuário logado no Supabase
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) {
+    return authScreen();
+  }
+
+  // 2. Busca o perfil e permissões do usuário logado
+  let { data: prof, error: pErr } = await sb.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
+
+  // Se o usuário acabou de ser criado no Auth e ainda não tem linha em profiles, cria como vendedor padrão
+  if (!prof && !pErr) {
+    const novoPerfil = {
+      id: session.user.id,
+      nome: session.user.email.split('@')[0],
+      email: session.user.email,
+      role: 'seller',
+      bloq: false,
+      telas: DEF_SCR.seller
+    };
+    await sb.from('profiles').insert(novoPerfil);
+    prof = novoPerfil;
+  }
+
+  if (!prof || prof.bloq) {
+    await sb.auth.signOut();
+    alert('Sua conta está bloqueada ou sem permissão de acesso.');
+    return authScreen();
+  }
+
+  me = prof;
+  role = prof.role;
+
+  // 3. Se for administrador, carrega a lista de todos os usuários para a aba de acessos
+  if (isA()) {
+    const { data: allUsers } = await sb.from('profiles').select('*');
+    if (allUsers) U = allUsers;
+  }
+
+  // 4. Baixa os dados financeiros/produtos da empresa na nuvem
+  const { data: cloud } = await sb.from('dashboard_data').select('payload').eq('organization_id', ORG_ID).maybeSingle();
+  if (cloud && cloud.payload) {
+    S = { ...S, ...cloud.payload };
+    S.quotes = S.quotes || [];
+    S.qseq = S.qseq || 1;
+    S.dre = S.dre || null;
+  }
+
+  // 5. Renderiza o sistema
+  R();
+}
+
+bootstrap();

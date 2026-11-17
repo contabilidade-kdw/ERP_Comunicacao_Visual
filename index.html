@@ -1,18 +1,26 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>ERP Comunicação Visual - Gestão, Estoque e DRE</title>
-<meta name="description" content="Gestão de produtos, orçamentos, importação de estoque, DRE contábil e vendas para comunicação visual.">
-<!-- Bibliotecas para leitura universal de planilhas (.xls, .xlsx, .csv) e DRE em PDF -->
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<link rel="stylesheet" href="style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ERP Comunicação Visual - Gestão, Estoque e DRE</title>
+  <meta name="description" content="Gestão de produtos, orçamentos, importação de estoque, DRE contábil e vendas para comunicação visual.">
+  
+  <!-- Bibliotecas externas -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<nav id="nav"></nav>
-<main id="app"></main>
-<script src="app.js"></script>
+  <nav id="nav"></nav>
+  <main id="app"></main>
+
+  <!-- Conexão Supabase e inicialização da aplicação após o DOM carregar -->
+  <script>
+    const sb = supabase.createClient('https://nwnxscicjvfcclewtdtd.supabase.co', 'sb_publishable_CiPKayTjReqiauogOO_NNw_6-fJbRwM');
+  </script>
+  <script src="app.js"></script>
 </body>
 </html>
